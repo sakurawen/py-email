@@ -6,8 +6,35 @@ import poplib      # Python内置的POP3邮件协议库
 # 创建邮件相关的路由器，设置路由前缀和标签
 router = APIRouter(prefix="/email",tags=["Email"])
 
-# 设置网易163邮箱的POP3服务器地址
-pop3_server = 'pop.163.com'
+def get_pop3_server(email:str):
+    """
+    根据邮箱域名获取对应的POP3服务器地址
+    """
+    domain = email.split('@')[-1]
+    if domain == '163.com':
+        return 'pop.163.com'
+    elif domain == '126.com':
+        return 'pop.126.com'
+    elif domain == 'qq.com':
+        return 'pop.qq.com'
+    elif domain == 'gmail.com':
+        return 'pop.gmail.com'
+    elif domain == 'yahoo.com':
+        return 'pop.mail.yahoo.com'
+    elif domain == 'outlook.com':
+        return 'pop-mail.outlook.com'
+    elif domain == 'hotmail.com':
+        return 'pop3.live.com'
+    elif domain == 'sina.com':
+        return 'pop3.sina.com'
+    elif domain == 'sohu.com':
+        return 'pop.sohu.com'
+    elif domain == '139.com':
+        return 'pop.139.com'
+    elif domain == '189.com':
+        return 'pop.189.com'
+    else:
+        raise ValueError(f"不支持的邮箱域名: {domain}")
 
 @router.get("/{email}/{password}",response_class=HTMLResponse)
 def get_email(email:str,password:str):
@@ -22,6 +49,8 @@ def get_email(email:str,password:str):
         HTMLResponse: 邮件的HTML内容，如果获取失败则返回错误信息
     """
     try:
+        # 获取对应的POP3服务器地址
+        pop3_server = get_pop3_server(email)
         # 连接到POP3服务器
         server = poplib.POP3(pop3_server)
         # 登录邮箱
