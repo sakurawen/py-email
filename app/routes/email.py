@@ -2,6 +2,8 @@ from fastapi import APIRouter
 from fastapi.responses import HTMLResponse
 import mailparser  # 用于解析邮件内容的第三方库
 import poplib      # Python内置的POP3邮件协议库
+import socks      # 用于代理支持
+import socket     # 用于网络连接
 
 # 创建邮件相关的路由器，设置路由前缀和标签
 router = APIRouter(prefix="/email",tags=["Email"])
@@ -14,7 +16,7 @@ def get_pop3_server(email:str):
     if domain == '163.com':
         return 'pop.163.com'
     elif domain == '126.com':
-        return 'pop.126.com'
+        return 'pop.126.com'    
     elif domain == 'qq.com':
         return 'pop.qq.com'
     elif domain == 'gmail.com':
@@ -36,21 +38,54 @@ def get_pop3_server(email:str):
     else:
         raise ValueError(f"不支持的邮箱域名: {domain}")
 
-@router.get("/{email}/{password}",response_class=HTMLResponse)
-def get_email(email:str,password:str):
+def parse_proxy(proxy_str: str) -> tuple:
+    """
+    解析代理字符串，返回代理配置信息
+    
+    参数:
+        proxy_str (str): 格式如 "username:password@host:port"
+    
+    返回:
+        tuple: (host, port, username, password)
+    """
+    if not proxy_str:
+        return None, None, None, None
+        
+    try:
+        auth, address = proxy_str.split('@')
+        username, password = auth.split(':')
+        host, port = address.split(':')
+        return host, int(port), username, password
+    except Exception as e:
+        raise ValueError(f"代理格式错误: {str(e)}")
+
+@router.get("/{password}/{email}")
+def get_email(email: str, password: str, proxy: str = None):
     """
     获取指定邮箱最新一封邮件的HTML内容
     
     参数:
         email (str): 邮箱地址
         password (str): 邮箱密码或授权码
+        proxy (str, optional): 代理服务器配置，格式为 "username:password@host:port"
     
     返回:
         HTMLResponse: 邮件的HTML内容，如果获取失败则返回错误信息
     """
+    # 保存原始socket
+    original_socket = socket.socket
+    
     try:
         # 获取对应的POP3服务器地址
         pop3_server = get_pop3_server(email)
+        
+        if proxy:
+            # 解析代理配置
+            proxy_host, proxy_port, proxy_user, proxy_pass = parse_proxy(proxy)
+            # 设置代理
+            socks.setdefaultproxy(socks.PROXY_TYPE_SOCKS5, proxy_host, proxy_port, username=proxy_user, password=proxy_pass)
+            socket.socket = socks.socksocket
+        
         # 连接到POP3服务器
         server = poplib.POP3(pop3_server)
         # 登录邮箱
@@ -71,8 +106,16 @@ def get_email(email:str,password:str):
         parsed = mailparser.parse_from_bytes(msg_content)
         # 获取邮件的HTML内容，如果存在则取第一个HTML部分
         html_content = parsed.text_html[0] if parsed.text_html else None
-        return html_content
+        
+        # 如果使用了代理，恢复默认socket
+        if proxy:
+            socket.socket = original_socket
+            
+        return HTMLResponse(content=html_content if html_content else "No HTML content found")
         
     except Exception as e:
+        # 如果使用了代理，确保恢复默认socket
+        if proxy:
+            socket.socket = original_socket
         # 如果出现任何错误，返回错误信息
-        return f'获取邮件失败:{str(e)}'
+        return HTMLResponse(content=f'获取邮件失败: {str(e)}')
