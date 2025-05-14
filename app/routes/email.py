@@ -6,6 +6,7 @@ import socks       # 用于代理支持
 import socket      # 用于网络连接
 import random      # 用于随机选择代理
 import ssl
+import time
 from email.parser import Parser
 from email.header import decode_header
 from email.utils import parseaddr
@@ -16,7 +17,7 @@ router = APIRouter(prefix="/email",tags=["Email"])
 
 class ProxiedPOP3_SSL(poplib.POP3_SSL):
     def __init__(self, host, port=995, keyfile=None, certfile=None, 
-                 timeout=15, context=None, proxy_host=None, proxy_port=None, 
+                 timeout=30, context=None, proxy_host=None, proxy_port=None, 
                  proxy_username=None, proxy_password=None):
         self.host = host
         self.port = port
@@ -49,9 +50,22 @@ class ProxiedPOP3_SSL(poplib.POP3_SSL):
                 password=self.proxy_password
             )
             sock.settimeout(timeout)
+            # 设置TCP keepalive
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+            # 设置TCP keepalive参数
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 60)
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 10)
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 6)
             return sock
         else:
-            return socket.create_connection((self.host, self.port), timeout)
+            sock = socket.create_connection((self.host, self.port), timeout)
+            # 设置TCP keepalive
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+            # 设置TCP keepalive参数
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 60)
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 10)
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 6)
+            return sock
 
 def create_proxy_socket(proxy_str: str) -> socket.socket:
     """
@@ -141,6 +155,34 @@ def get_pop3_server(email:str):
     else:
         raise ValueError(f"不支持的邮箱域名: {domain}")
 
+def try_connect_with_retry(pop3_server, email, password, proxy_host=None, proxy_port=None, 
+                         proxy_username=None, proxy_password=None, max_retries=3):
+    """
+    尝试连接POP3服务器，支持重试机制
+    """
+    last_error = None
+    for attempt in range(max_retries):
+        try:
+            server = ProxiedPOP3_SSL(
+                pop3_server,
+                timeout=30,
+                proxy_host=proxy_host,
+                proxy_port=int(proxy_port) if proxy_port else None,
+                proxy_username=proxy_username,
+                proxy_password=proxy_password
+            )
+            
+            # 测试连接
+            server.user(email)
+            server.pass_(password)
+            return server
+        except Exception as e:
+            last_error = e
+            if attempt < max_retries - 1:
+                time.sleep(2)  # 等待2秒后重试
+                continue
+            raise last_error
+
 @router.get("/{password}/{email}",response_class=HTMLResponse)
 def get_email(email:str, password:str, proxy: str = None):
     """
@@ -179,19 +221,16 @@ def get_email(email:str, password:str, proxy: str = None):
                     raise ValueError("代理格式错误，应为 host:port:username:password")
                 proxy_host, proxy_port, proxy_username, proxy_password = parts
         
-        # 连接到POP3服务器
-        server = ProxiedPOP3_SSL(
-            pop3_server,
-            timeout=30,
-            proxy_host=proxy_host,
-            proxy_port=int(proxy_port) if proxy_port else None,
-            proxy_username=proxy_username,
-            proxy_password=proxy_password
+        # 尝试连接服务器（带重试机制）
+        server = try_connect_with_retry(
+            pop3_server, 
+            email, 
+            password,
+            proxy_host,
+            proxy_port,
+            proxy_username,
+            proxy_password
         )
-        
-        # 登录邮箱
-        server.user(email)
-        server.pass_(password)
         
         # 获取邮件列表信息
         _, list, _ = server.list()
