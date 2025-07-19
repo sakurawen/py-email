@@ -8,6 +8,10 @@ import socket     # 用于网络连接
 # 创建邮件相关的路由器，设置路由前缀和标签
 router = APIRouter(prefix="/email",tags=["Email"])
 
+
+sslMap  ={
+    "gmx.com":True
+}
 class ProxyContext:
     def __init__(self, proxy_host, proxy_port, proxy_user, proxy_pass):
         self.proxy_host = proxy_host
@@ -42,6 +46,10 @@ def get_pop3_server(email:str):
         return 'pop.163.com'
     elif domain == '126.com':
         return 'pop.126.com'    
+    elif domain =='gmx.com':
+        return 'pop.gmx.com'
+    elif domain =='t-online.de':
+        return 'pop.t-online.de'
     elif domain == 'qq.com':
         return 'pop.qq.com'
     elif domain == 'gmail.com':
@@ -119,7 +127,11 @@ def get_email(email: str, password: str, proxy: str = None):
         # 使用上下文管理器处理代理
         with ProxyContext(proxy_host, proxy_port, proxy_user, proxy_pass):
             # 连接到POP3服务器
-            server = poplib.POP3(pop3_server)
+            domain = email.split('@')[-1]
+            if(sslMap.get(domain)):
+                server = poplib.POP3_SSL(pop3_server)
+            else:
+                server = poplib.POP3(pop3_server)
             # 登录邮箱
             server.user(email)
             server.pass_(password)
